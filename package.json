@@ -1,0 +1,77 @@
+{
+  "name": "drip-fs",
+  "version": "1.0.0",
+  "description": "Memory-efficient streaming downloads for web apps and browser extensions",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    },
+    "./background": {
+      "types": "./dist/background.d.ts",
+      "import": "./dist/background.mjs",
+      "require": "./dist/background.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src/bridge/bridge.html",
+    "src/bridge/bridge.js",
+    "src/bridge/sw.js",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts src/background.ts --format cjs,esm --dts --clean",
+    "dev": "tsup src/index.ts src/background.ts --format cjs,esm --dts --watch",
+    "test": "vitest run",
+    "test:ui": "vitest --ui",
+    "test:coverage": "vitest --coverage",
+    "lint": "eslint src --ext .ts",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run build && npm run test && npm run typecheck"
+  },
+  "keywords": [
+    "stream",
+    "download",
+    "browser",
+    "extension",
+    "chrome-extension",
+    "web-extension",
+    "web-streams",
+    "large-files",
+    "streaming",
+    "memory-efficient",
+    "service-worker",
+    "manifest-v3"
+  ],
+  "author": "prathercc",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/prathercc/drip-fs.git"
+  },
+  "bugs": {
+    "url": "https://github.com/prathercc/drip-fs/issues"
+  },
+  "homepage": "https://github.com/prathercc/drip-fs#readme",
+  "devDependencies": {
+    "@types/chrome": "^0.1.37",
+    "@types/node": "^20.11.0",
+    "@typescript-eslint/eslint-plugin": "^6.19.0",
+    "@typescript-eslint/parser": "^6.19.0",
+    "@vitest/coverage-v8": "^1.2.0",
+    "@vitest/ui": "^1.2.0",
+    "eslint": "^8.56.0",
+    "jsdom": "^26.1.0",
+    "tsup": "^8.0.1",
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.0"
+  },
+  "engines": {
+    "node": ">=16"
+  }
+}
