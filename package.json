@@ -48,16 +48,16 @@
     "service-worker",
     "manifest-v3"
   ],
-  "author": "prathercc",
+  "author": "Prather Bytecraft",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/prathercc/drip-fs.git"
+    "url": "git+https://github.com/pratherbytecraft/drip-fs.git"
   },
   "bugs": {
-    "url": "https://github.com/prathercc/drip-fs/issues"
+    "url": "https://github.com/pratherbytecraft/drip-fs/issues"
   },
-  "homepage": "https://github.com/prathercc/drip-fs#readme",
+  "homepage": "https://github.com/pratherbytecraft/drip-fs#readme",
   "devDependencies": {
     "@types/chrome": "^0.1.37",
     "@types/node": "^20.11.0",

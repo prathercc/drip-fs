@@ -355,6 +355,6 @@ for the original work.
 
 ## License
 
-[MIT](./LICENSE) © prathercc. Portions adapted from StreamSaver.js, © 2016 Jimmy Wärting (MIT).
+[MIT](./LICENSE) © Prather Bytecraft. Portions adapted from StreamSaver.js, © 2016 Jimmy Wärting (MIT).
 
 ---
