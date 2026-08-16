@@ -78,13 +78,16 @@ describe('detection', () => {
     expect(isIOSWebKit(nav({ userAgent: 'Mozilla/5.0 (Linux; Android 14) Chrome/126', platform: 'Linux armv8l' }))).toBe(false);
   });
 
-  it('isOpfsAvailable needs getDirectory, Worker, and createSyncAccessHandle', () => {
+  it('isOpfsAvailable needs getDirectory, Worker, and FileSystemFileHandle (sync handles are worker-only, not probed)', () => {
     const saved = { storage: (navigator as any).storage, FSFH: (globalThis as any).FileSystemFileHandle, Worker: (globalThis as any).Worker };
     Object.defineProperty(navigator, 'storage', { value: { getDirectory: vi.fn() }, configurable: true });
     (globalThis as any).Worker = class {};
-    (globalThis as any).FileSystemFileHandle = class { createSyncAccessHandle() {} };
-    expect(isOpfsAvailable()).toBe(true);
     (globalThis as any).FileSystemFileHandle = class {};
+    expect(isOpfsAvailable()).toBe(true);
+    (globalThis as any).FileSystemFileHandle = undefined;
+    expect(isOpfsAvailable()).toBe(false);
+    (globalThis as any).FileSystemFileHandle = class {};
+    Object.defineProperty(navigator, 'storage', { value: undefined, configurable: true });
     expect(isOpfsAvailable()).toBe(false);
     Object.defineProperty(navigator, 'storage', { value: saved.storage, configurable: true });
     (globalThis as any).FileSystemFileHandle = saved.FSFH;
@@ -188,6 +191,19 @@ describe('createStreamingDownload mode selection', () => {
     await createStreamingDownload('x.zip');
     expect(FakeWorker.instances).toHaveLength(1);
     expect((navigator.serviceWorker!.controller as any).postMessage).not.toHaveBeenCalled();
+  });
+
+  it('auto on iOS falls back to the in-memory Blob (never the iframe) when the worker cannot open a handle', async () => {
+    Object.defineProperty(navigator, 'userAgent', { value: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)', configurable: true });
+    FakeWorker.failOn = 'open';
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const append = vi.spyOn(document.body, 'appendChild');
+    const w = await createStreamingDownload('x.zip');
+    expect((navigator.serviceWorker!.controller as any).postMessage).not.toHaveBeenCalled();
+    expect(append.mock.calls.some(([n]) => (n as HTMLElement).tagName === 'IFRAME')).toBe(false);
+    await w.write(new Uint8Array([1, 2]));
+    expect(w.bytesWritten).toBe(2);
+    expect(console.warn).toHaveBeenCalled();
   });
 
   it("mode 'opfs' forces the staged path off iOS", async () => {

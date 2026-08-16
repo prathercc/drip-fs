@@ -30,14 +30,84 @@ function isExtensionContext(): boolean {
  * await writer.close();
  * ```
  */
+/**
+ * In-memory Blob fallback. Used by Firefox extensions (no
+ * navigator.serviceWorker in extension pages), by mode 'blob', and by iOS
+ * WebKit when the OPFS staging path is unavailable. Entire file is held in
+ * memory and downloaded on close().
+ */
+function createBlobDownload(
+  filename: string,
+  onProgress?: (bytesWritten: number) => void
+): StreamDownloadWriter {
+  const chunks: Uint8Array[] = [];
+  let blobBytesWritten = 0;
+  let blobClosed = false;
+
+  return {
+    async write(chunk: Uint8Array): Promise<void> {
+      if (blobClosed) {
+        throw new Error('Cannot write to closed stream');
+      }
+      chunks.push(chunk);
+      blobBytesWritten += chunk.byteLength;
+      if (onProgress) {
+        onProgress(blobBytesWritten);
+      }
+    },
+
+    async close(): Promise<void> {
+      if (blobClosed) return;
+      blobClosed = true;
+
+      const blob = new Blob(chunks as BlobPart[], { type: 'application/octet-stream' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      }, 1000);
+      chunks.length = 0;
+    },
+
+    async abort(): Promise<void> {
+      if (blobClosed) return;
+      blobClosed = true;
+      chunks.length = 0;
+    },
+
+    get bytesWritten(): number {
+      return blobBytesWritten;
+    },
+  } satisfies StreamDownloadWriter;
+}
+
 export async function createStreamingDownload(
   filename: string,
   options: StreamDownloadOptions = {}
 ): Promise<StreamDownloadWriter> {
   const { size, onProgress, mode = 'auto' } = options;
 
-  if (mode === 'opfs' || (mode === 'auto' && isIOSWebKit() && isOpfsAvailable())) {
+  if (mode === 'opfs') {
     return createOpfsDownload(filename, options);
+  }
+  if (mode === 'auto' && isIOSWebKit()) {
+    // iOS WebKit must never reach the iframe path (it navigates the tab
+    // away). Stage through OPFS; if the worker cannot open a handle
+    // (old WebKit, quota), buffer in memory instead.
+    if (isOpfsAvailable()) {
+      try {
+        return await createOpfsDownload(filename, options);
+      } catch (err) {
+        console.warn('drip-fs: OPFS staging unavailable, buffering in memory instead.', err);
+      }
+    }
+    return createBlobDownload(filename, onProgress);
   }
   const forceBlob = mode === 'blob';
   const allowStream = mode === 'auto' || mode === 'stream';
@@ -81,57 +151,7 @@ export async function createStreamingDownload(
       [channel.port2]
     );
   } else {
-    // Blob accumulation fallback — no service worker available.
-    // Used by Firefox extensions (navigator.serviceWorker is undefined
-    // in extension pages) and any other context without SW support.
-    // Entire file is held in memory and downloaded on close().
-    const chunks: Uint8Array[] = [];
-    let blobBytesWritten = 0;
-    let blobClosed = false;
-
-    return {
-      async write(chunk: Uint8Array): Promise<void> {
-        if (blobClosed) {
-          throw new Error('Cannot write to closed stream');
-        }
-        chunks.push(chunk);
-        blobBytesWritten += chunk.byteLength;
-        if (onProgress) {
-          onProgress(blobBytesWritten);
-        }
-      },
-
-      async close(): Promise<void> {
-        if (blobClosed) return;
-        blobClosed = true;
-
-        const blob = new Blob(chunks as BlobPart[], { type: 'application/octet-stream' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = filename;
-        a.style.display = 'none';
-        document.body.appendChild(a);
-        a.click();
-        // Allow browser to initiate download before cleanup
-        setTimeout(() => {
-          URL.revokeObjectURL(url);
-          document.body.removeChild(a);
-        }, 1000);
-        // Free memory
-        chunks.length = 0;
-      },
-
-      async abort(): Promise<void> {
-        if (blobClosed) return;
-        blobClosed = true;
-        chunks.length = 0;
-      },
-
-      get bytesWritten(): number {
-        return blobBytesWritten;
-      },
-    } satisfies StreamDownloadWriter;
+    return createBlobDownload(filename, onProgress);
   }
 
   // Wait for download URL from service worker

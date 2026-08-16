@@ -26,14 +26,18 @@ export function isIOSWebKit(nav: Navigator = navigator): boolean {
   return /iP(hone|ad|od)/.test(ua) || (nav.platform === 'MacIntel' && (nav.maxTouchPoints ?? 0) > 1);
 }
 
-/** OPFS with worker sync access handles is what this path needs. */
+/**
+ * What the main thread can see of OPFS. `createSyncAccessHandle` only
+ * exists on FileSystemFileHandle INSIDE a worker, so it cannot be probed
+ * here; a missing handle surfaces as the worker's 'open' error instead,
+ * which createStreamingDownload turns into the Blob fallback.
+ */
 export function isOpfsAvailable(): boolean {
   return (
     typeof navigator !== 'undefined' &&
     typeof navigator.storage?.getDirectory === 'function' &&
     typeof Worker !== 'undefined' &&
-    typeof FileSystemFileHandle !== 'undefined' &&
-    'createSyncAccessHandle' in FileSystemFileHandle.prototype
+    typeof FileSystemFileHandle !== 'undefined'
   );
 }
 
