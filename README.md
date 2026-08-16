@@ -8,6 +8,7 @@ Drip large files to disk a chunk at a time instead of pouring them through RAM. 
 
 - **Flat memory profile** - Chunks drip to disk as you write them. RAM usage doesn't grow with file size.
 - **Extension support** - Chrome MV3 (streaming via dedicated service worker) and Firefox MV3 (automatic blob fallback).
+- **iOS support** - iPhone/iPad browsers forbid iframe downloads, so drip-fs stages the file in the Origin Private File System through a worker (flat memory) and saves a file-backed URL on close. Automatic; force it anywhere with `mode: 'opfs'`.
 - **Simple API** - Promise-based, single `createStreamingDownload()` call returns a writer with `write` / `close` / `abort`.
 - **TypeScript** - Full type definitions included.
 - **Well tested** - Comprehensive coverage including path-selection regression tests.
@@ -27,6 +28,18 @@ App calls createStreamingDownload('file.zip')
     → SW intercepts download URL via fetch event
     → Browser streams file to disk
 ```
+
+**iOS WebKit** (Safari, Chrome, Firefox on iPhone/iPad) cannot download from an iframe, so the stream would navigate the tab away. `mode: 'auto'` detects it and stages instead:
+
+```
+App calls createStreamingDownload('file.zip')
+  → Worker opens a sync access handle on an OPFS staging file
+    → Chunks are written to disk as they arrive (RAM stays flat)
+      → close() saves a File-backed object URL via <a download>
+        → staged file is swept on the next call after 1 hour
+```
+
+Options: `mode: 'auto' | 'stream' | 'opfs' | 'blob'` (default `'auto'`).
 
 **Chrome extensions** use a hidden iframe + dedicated service worker (to avoid scope conflicts with the background SW):
 

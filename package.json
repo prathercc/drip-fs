@@ -1,6 +1,6 @@
 {
   "name": "drip-fs",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Memory-efficient streaming downloads for web apps and browser extensions",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",

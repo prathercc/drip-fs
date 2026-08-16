@@ -1,6 +1,7 @@
 /// <reference types="chrome" />
 
 import type { StreamDownloadOptions, StreamDownloadWriter } from './types';
+import { createOpfsDownload, isIOSWebKit, isOpfsAvailable } from './opfs';
 
 /**
  * Detects if running in a browser extension context
@@ -12,10 +13,11 @@ function isExtensionContext(): boolean {
 /**
  * Creates a streaming download writer
  *
- * Three paths, in priority order:
+ * Paths, in priority order (mode 'auto'):
+ * 0. OPFS-staged file on iOS WebKit (iframe downloads are forbidden there)
  * 1. Direct SW controller (background called setupStreamingDownloads, or web app SW)
  * 2. Bridge iframe + dedicated SW (Chrome extensions without background setup)
- * 3. Error if no viable download path
+ * 3. In-memory Blob fallback
  *
  * @param filename - Name of the file to download
  * @param options - Optional configuration
@@ -32,7 +34,13 @@ export async function createStreamingDownload(
   filename: string,
   options: StreamDownloadOptions = {}
 ): Promise<StreamDownloadWriter> {
-  const { size, onProgress } = options;
+  const { size, onProgress, mode = 'auto' } = options;
+
+  if (mode === 'opfs' || (mode === 'auto' && isIOSWebKit() && isOpfsAvailable())) {
+    return createOpfsDownload(filename, options);
+  }
+  const forceBlob = mode === 'blob';
+  const allowStream = mode === 'auto' || mode === 'stream';
 
   // Create message channel for communication
   const channel = new MessageChannel();
@@ -41,7 +49,7 @@ export async function createStreamingDownload(
   // Bridge iframe used only in extension context
   let bridgeIframe: HTMLIFrameElement | null = null;
 
-  if (navigator.serviceWorker?.controller) {
+  if (allowStream && !forceBlob && navigator.serviceWorker?.controller) {
     // Direct path: a service worker controller is available.
     // Works for web apps (SW registered via setupStreamingDownloads) and
     // browser extensions where the background script calls setupStreamingDownloads().
@@ -49,7 +57,7 @@ export async function createStreamingDownload(
       { filename, size },
       [channel.port2]
     );
-  } else if (isExtensionContext() && typeof navigator.serviceWorker !== 'undefined') {
+  } else if (allowStream && !forceBlob && isExtensionContext() && typeof navigator.serviceWorker !== 'undefined') {
     // Extension fallback: no background SW controller available, but
     // navigator.serviceWorker exists (Chrome). Load bridge iframe which
     // registers its own dedicated SW.
@@ -211,3 +219,4 @@ export async function createStreamingDownload(
  * Re-export types for convenience
  */
 export type { StreamDownloadOptions, StreamDownloadWriter } from './types';
+export { isIOSWebKit, isOpfsAvailable } from './opfs';
