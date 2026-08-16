@@ -3,7 +3,8 @@
  */
 export interface StreamDownloadOptions {
   /**
-   * Expected file size in bytes (optional, for progress tracking)
+   * Expected file size in bytes (optional). Used for progress tracking,
+   * and by the OPFS path as the up-front free-storage check for the part.
    */
   size?: number;
 

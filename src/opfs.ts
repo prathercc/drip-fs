@@ -19,6 +19,39 @@ import type { StreamDownloadOptions, StreamDownloadWriter } from './types';
 
 export const STAGING_DIR = 'drip-fs-staging';
 export const STAGING_TTL_MS = 60 * 60 * 1000;
+/** Startup sweep tolerance: anything older than this cannot be an in-flight part of THIS page. */
+export const STARTUP_SWEEP_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * Staged files this page created whose writer has finished (closed). The
+ * next part releases them, so a multi-part export occupies one part of
+ * storage at a time instead of every part until the TTL sweep.
+ */
+const finishedStaged = new Set<string>();
+
+/** @internal Test hook: forget finished parts from a previous test. */
+export function _resetStagingState(): void {
+  finishedStaged.clear();
+}
+
+const formatBytes = (n: number): string =>
+  n >= 1024 ** 3 ? `${(n / 1024 ** 3).toFixed(1)} GB` : `${Math.ceil(n / 1024 ** 2)} MB`;
+
+/**
+ * Refuse up front when the origin clearly cannot hold a part of `size`
+ * bytes, so the caller gets a readable error instead of a mid-part write
+ * failure. Skipped when the browser cannot estimate.
+ */
+export async function assertStagingRoom(size: number): Promise<void> {
+  const estimate = await navigator.storage.estimate?.().catch(() => undefined);
+  if (!estimate || estimate.quota == null || estimate.usage == null) return;
+  const free = estimate.quota - estimate.usage;
+  if (free < size) {
+    throw new Error(
+      `Not enough free storage to stage a ${formatBytes(size)} download part (about ${formatBytes(Math.max(free, 0))} available). Lower the part size or free some space.`
+    );
+  }
+}
 
 /** iPhone/iPad, including iPadOS reporting a desktop Mac UA with touch. */
 export function isIOSWebKit(nav: Navigator = navigator): boolean {
@@ -87,18 +120,46 @@ export function createOpfsWorker(): Worker {
 }
 
 /** Drop staged files older than the TTL. Best effort; never throws. */
-export async function sweepStaging(dir: FileSystemDirectoryHandle, now = Date.now()): Promise<void> {
+export async function sweepStaging(
+  dir: FileSystemDirectoryHandle,
+  now = Date.now(),
+  ttlMs = STAGING_TTL_MS
+): Promise<void> {
   try {
     const entries = (dir as unknown as { entries(): AsyncIterable<[string, FileSystemHandle]> }).entries();
     for await (const [name, entry] of entries) {
       if (entry.kind !== 'file') continue;
       const stamp = Number(name.split('-')[0]);
-      if (Number.isFinite(stamp) && now - stamp > STAGING_TTL_MS) {
+      if (Number.isFinite(stamp) && now - stamp > ttlMs) {
         await dir.removeEntry(name).catch(() => undefined);
       }
     }
   } catch {
     /* sweeping is a nicety */
+  }
+}
+
+/** Release staged files whose writers already closed (previous parts). */
+async function releaseFinished(dir: FileSystemDirectoryHandle): Promise<void> {
+  for (const name of [...finishedStaged]) {
+    finishedStaged.delete(name);
+    await dir.removeEntry(name).catch(() => undefined);
+  }
+}
+
+/**
+ * Call once at app startup: clears staged downloads left by earlier
+ * sessions (a closed tab never gets to its own next-part release). No-op
+ * where OPFS is unavailable; never throws.
+ */
+export async function sweepStagedDownloads(ttlMs = STARTUP_SWEEP_TTL_MS): Promise<void> {
+  try {
+    if (typeof navigator === 'undefined' || typeof navigator.storage?.getDirectory !== 'function') return;
+    const root = await navigator.storage.getDirectory();
+    const dir = await root.getDirectoryHandle(STAGING_DIR, { create: false }).catch(() => null);
+    if (dir) await sweepStaging(dir, Date.now(), ttlMs);
+  } catch {
+    /* best effort */
   }
 }
 
@@ -122,10 +183,12 @@ export async function createOpfsDownload(
   filename: string,
   options: StreamDownloadOptions = {}
 ): Promise<StreamDownloadWriter> {
-  const { onProgress } = options;
+  const { onProgress, size } = options;
   const root = await navigator.storage.getDirectory();
   const dir = await root.getDirectoryHandle(STAGING_DIR, { create: true });
+  await releaseFinished(dir);
   await sweepStaging(dir);
+  if (size && size > 0) await assertStagingRoom(size);
   const stagedName = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
   const fileHandle = await dir.getFileHandle(stagedName, { create: true });
   const worker = createOpfsWorker();
@@ -172,6 +235,9 @@ export async function createOpfsDownload(
       worker.terminate();
       const file = await fileHandle.getFile();
       saveFile(file, filename);
+      // Released when the next part starts (or by the TTL sweep): the
+      // browser may still be copying this file right now.
+      finishedStaged.add(stagedName);
     },
 
     async abort(): Promise<void> {

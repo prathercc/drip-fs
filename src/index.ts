@@ -239,4 +239,4 @@ export async function createStreamingDownload(
  * Re-export types for convenience
  */
 export type { StreamDownloadOptions, StreamDownloadWriter } from './types';
-export { isIOSWebKit, isOpfsAvailable } from './opfs';
+export { isIOSWebKit, isOpfsAvailable, sweepStagedDownloads } from './opfs';

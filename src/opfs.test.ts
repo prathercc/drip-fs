@@ -1,6 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
+  _resetStagingState,
   createOpfsDownload,
+  sweepStagedDownloads,
+  assertStagingRoom,
+  STARTUP_SWEEP_TTL_MS,
   isIOSWebKit,
   isOpfsAvailable,
   sweepStaging,
@@ -105,6 +109,7 @@ describe('createOpfsDownload', () => {
   let opfs: ReturnType<typeof makeOpfs>;
   let click: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
+    _resetStagingState();
     FakeWorker.instances = [];
     FakeWorker.failOn = null;
     opfs = makeOpfs();
@@ -160,6 +165,45 @@ describe('createOpfsDownload', () => {
     expect(opfs.removeEntry).toHaveBeenCalledTimes(1);
   });
 
+  it('releases the previous part\'s staged file when the next part starts, but never its own', async () => {
+    const first = await createOpfsDownload('part-1.zip');
+    await first.write(new Uint8Array([1]));
+    await first.close();
+    expect(opfs.removeEntry).not.toHaveBeenCalled();
+    const firstName = [...opfs.files.keys()][0];
+
+    const second = await createOpfsDownload('part-2.zip');
+    expect(opfs.removeEntry).toHaveBeenCalledWith(firstName);
+    expect([...opfs.files.keys()]).toHaveLength(1);
+    await second.write(new Uint8Array([2]));
+    await second.close();
+    expect(opfs.removeEntry).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses up front with a readable error when the part will not fit, and skips when it cannot estimate', async () => {
+    Object.defineProperty(navigator, 'storage', {
+      value: { getDirectory: vi.fn(async () => opfs.root), estimate: vi.fn(async () => ({ quota: 10 * 1024 ** 3, usage: 9.5 * 1024 ** 3 })) },
+      configurable: true,
+    });
+    await expect(createOpfsDownload('x.zip', { size: 4 * 1024 ** 3 })).rejects.toThrow(/Not enough free storage to stage a 4\.0 GB download part/);
+    expect(FakeWorker.instances).toHaveLength(0);
+    await expect(createOpfsDownload('x.zip', { size: 100 * 1024 ** 2 })).resolves.toBeTruthy();
+
+    Object.defineProperty(navigator, 'storage', { value: { getDirectory: vi.fn(async () => opfs.root) }, configurable: true });
+    await expect(assertStagingRoom(1)).resolves.toBeUndefined();
+  });
+
+  it('sweepStagedDownloads at startup clears leftovers older than 5 minutes and no-ops without OPFS', async () => {
+    const now = Date.now();
+    opfs.files.set(`${now - STARTUP_SWEEP_TTL_MS - 1}-stale`, { kind: 'file', name: 'stale' });
+    opfs.files.set(`${now - 1000}-live`, { kind: 'file', name: 'live' });
+    await sweepStagedDownloads();
+    expect([...opfs.files.keys()]).toEqual([`${now - 1000}-live`]);
+
+    Object.defineProperty(navigator, 'storage', { value: undefined, configurable: true });
+    await expect(sweepStagedDownloads()).resolves.toBeUndefined();
+  });
+
   it('sweeps staged files older than the TTL and keeps fresh ones', async () => {
     const now = 1_700_000_000_000;
     opfs.files.set(`${now - STAGING_TTL_MS - 1}-old`, { kind: 'file', name: 'old' });
@@ -173,6 +217,7 @@ describe('createOpfsDownload', () => {
 describe('createStreamingDownload mode selection', () => {
   const originalUA = navigator.userAgent;
   beforeEach(() => {
+    _resetStagingState();
     FakeWorker.instances = [];
     FakeWorker.failOn = null;
     const opfs = makeOpfs();

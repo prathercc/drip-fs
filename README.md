@@ -36,8 +36,11 @@ App calls createStreamingDownload('file.zip')
   → Worker opens a sync access handle on an OPFS staging file
     → Chunks are written to disk as they arrive (RAM stays flat)
       → close() saves a File-backed object URL via <a download>
-        → staged file is swept on the next call after 1 hour
+        → the previous part's staged file is released when the next part starts
+          (TTL sweep after 1 hour as the safety net; call sweepStagedDownloads() at app start)
 ```
+
+Pass `size` (the part's maximum bytes) and the OPFS path checks free storage up front, throwing a readable error instead of failing mid-part.
 
 Options: `mode: 'auto' | 'stream' | 'opfs' | 'blob'` (default `'auto'`).
 
